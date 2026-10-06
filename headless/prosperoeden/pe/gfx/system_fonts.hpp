@@ -14,10 +14,11 @@
 namespace pe::gfx
 {
 
-// The launcher's own font (Montserrat, baked into an atlas) covers Latin and Cyrillic. Japanese,
-// Korean, Chinese, Greek, Thai and Arabic come from the font files the PS5 system software
-// carries (/preinst/common/font): nothing is shipped with the app. A file is read the first time
-// one of its characters is needed.
+// The launcher's own font (Montserrat, baked into an atlas) covers Latin and Cyrillic. Chinese,
+// Traditional Chinese, Japanese and Korean additionally read the subset shipped with the app
+// (ui/fonts/noto-sans-cjk-subset.ttf, named first); Greek, Thai and Arabic still come only from
+// the font files the PS5 system software carries (/preinst/common/font). A file is read the first
+// time one of its characters is needed.
 //
 // Shaping (which glyph a character becomes next to its neighbours, and where marks sit) is
 // HarfBuzz's; the outlines are turned into distance fields like those of the baked atlas.

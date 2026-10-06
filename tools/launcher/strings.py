@@ -5,6 +5,8 @@
 """strings.py extract          write tools/launcher/launcher.pot from the text marked in the code
 strings.py new <tag>          start headless/prosperoeden/ui/lang/<tag>.po from the template
 strings.py check              check every catalog in headless/prosperoeden/ui/lang
+strings.py subset             cut headless/prosperoeden/ui/fonts/noto-sans-cjk-subset.ttf
+                              from third_party/fonts/NotoSansCJKsc-Regular.otf
 
 The code holds the English text: tr("...") where it is drawn, TR("...") in constant tables (and
 the setting labels of headless/settings_store.h). A catalog is a gettext .po file named after the
@@ -16,9 +18,12 @@ check fails when a catalog
   - uses a character the launcher's font does not have.
 It warns when a translation is much longer than the English text (it may not fit its place).
 
-The launcher's own font has Latin and Cyrillic letters. Japanese, Korean, Chinese, Greek, Thai and
-Arabic are drawn with the console's fonts (pe/gfx/system_fonts.hpp): their catalogs are checked
-against those when PE_SYSTEM_FONTS names a folder holding copies of them, and only for their
+The launcher's own font has Latin and Cyrillic letters. Chinese, Traditional Chinese,
+Japanese and Korean are drawn with the subset shipped with the app
+(ui/fonts/noto-sans-cjk-subset.ttf, cut from those catalogs: see subset below), overlaid
+with the console's fonts when they are mounted (pe/gfx/system_fonts.hpp). Greek, Thai and
+Arabic still come from the console's fonts alone: their catalogs are checked against
+those when PE_SYSTEM_FONTS names a folder holding copies of them, and only for their
 Latin text otherwise.
 """
 
@@ -26,6 +31,7 @@ import os
 import re
 import struct
 import sys
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -286,6 +292,117 @@ SYSTEM_FONT_CATALOGS = {"ja-JP", "ko-KR", "zh-Hans", "zh-Hant", "el-GR", "th-TH"
 # Characters that take no room: the zero-width space (a line may break there), direction marks.
 INVISIBLE = {0x200B, 0x200C, 0x200D, 0x200E, 0x200F}
 
+# The CJK subset shipped with the app, so Chinese no longer needs the console's fonts:
+# Noto Sans CJK SC Regular (OFL, third_party/fonts) cut down to the characters of the
+# Chinese, Traditional Chinese, Japanese and Korean catalogs. TTF, not woff2: the app's
+# stb_truetype reads TrueType outlines only. Rebuilt by `strings.py subset` (assets.sh).
+SUBSET_SOURCE = ROOT / "third_party/fonts/NotoSansCJKsc-Regular.otf"
+SUBSET_FONT = LAUNCHER / "ui/fonts/noto-sans-cjk-subset.ttf"
+SUBSET_CATALOGS = ("zh-Hans", "zh-Hant", "ja-JP", "ko-KR")
+# Always in the subset, even when no catalog uses them: plain ASCII (self-containment)
+# and the ellipsis Font::fit appends.
+SUBSET_EXTRA = set(range(0x20, 0x7F)) | {0x2026}
+# Beyond the catalogs the subset covers GB2312 (everyday Chinese in game titles and file
+# names), so those stay readable where the console's fonts are unmounted. Listed by the
+# codec, not by hand: reproducible without another file.
+SUBSET_GB2312_FIRST = 0x21
+SUBSET_GB2312_LAST = 0x2FA20
+
+
+def subset_charset():
+    """The characters the shipped subset must draw: the CJK catalogs' translations."""
+    characters = set(SUBSET_EXTRA)
+    for tag in SUBSET_CATALOGS:
+        path = CATALOGS / f"{tag}.po"
+        if path.is_file():
+            for translation in parse_po(path).values():
+                characters.update(ord(c) for c in translation if c != "\n")
+    for code in range(SUBSET_GB2312_FIRST, SUBSET_GB2312_LAST):
+        # Controls and format characters take no glyph: the app skips them (pe/gfx/font.cpp
+        # invisible) and no font maps them.
+        if unicodedata.category(chr(code)).startswith("C"):
+            continue
+        try:
+            chr(code).encode("gb2312")
+        except UnicodeEncodeError:
+            continue
+        characters.add(code)
+    return characters - INVISIBLE
+
+
+def subset_characters():
+    """The characters the shipped subset draws (its cmap), or None when it is missing."""
+    if not SUBSET_FONT.is_file():
+        return None
+    try:
+        return cmap_characters(SUBSET_FONT.read_bytes())
+    except Exception:
+        return None
+
+
+def cff_to_glyf(font):
+    """Rebuild the subset's CFF outlines as TrueType (glyf): stb_truetype reads those only."""
+    from fontTools.pens.cu2quPen import Cu2QuPen
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.ttLib import newTable
+    glyphs = font.getGlyphSet()
+    quadratic = {}
+    for name in glyphs.keys():
+        pen = TTGlyphPen(glyphs)
+        glyphs[name].draw(Cu2QuPen(pen, 1.0, reverse_direction=True))
+        quadratic[name] = pen.glyph()
+    font["loca"] = newTable("loca")
+    font["glyf"] = glyf = newTable("glyf")
+    glyf.glyphOrder = font.getGlyphOrder()
+    glyf.glyphs = quadratic
+    for glyph in quadratic.values():
+        glyph.recalcBounds(glyf)
+    del font["CFF "]
+    if "VORG" in font.reader.keys():
+        del font["VORG"]
+    maxp = newTable("maxp")
+    maxp.tableVersion = 0x00010000
+    maxp.maxZones = 1
+    maxp.maxTwilightPoints = maxp.maxStorage = maxp.maxFunctionDefs = 0
+    maxp.maxInstructionDefs = maxp.maxStackElements = maxp.maxSizeOfInstructions = 0
+    maxp.maxComponentElements = maxp.maxComponentDepth = 0
+    font["maxp"] = maxp
+    font.sfntVersion = "\x00\x01\x00\x00"
+    font["head"].glyphDataFormat = 0
+    maxp.recalc(font)
+
+
+def build_subset():
+    """Cut SUBSET_FONT from SUBSET_SOURCE (needs the fonttools package)."""
+    from fontTools import subset as glyph_subset
+    if not SUBSET_SOURCE.is_file():
+        return f"missing source font {SUBSET_SOURCE.relative_to(ROOT)}"
+    unicodes = sorted(subset_charset())
+    options = glyph_subset.Options()
+    # Only the features HarfBuzz applies on its own (plus locl, which picks the Japanese
+    # forms for ja-JP): vertical and proportional alternates are never used by the
+    # horizontal launcher, and keeping them would pull thousands of glyphs nobody draws.
+    options.layout_features = ["abvm", "blwm", "ccmp", "dist", "locl", "mark", "mkmk"]
+    options.name_IDs = ["*"]
+    options.hinting = False
+    options.desubroutinize = True
+    options.recalc_bounds = True
+    options.canonical_order = True
+    font = glyph_subset.load_font(str(SUBSET_SOURCE), options)
+    subsetter = glyph_subset.Subsetter(options)
+    subsetter.populate(unicodes=unicodes)
+    subsetter.subset(font)
+    cff_to_glyf(font)
+    SUBSET_FONT.parent.mkdir(parents=True, exist_ok=True)
+    glyph_subset.save_font(font, str(SUBSET_FONT), options)
+    from fontTools.ttLib import TTFont
+    saved = TTFont(str(SUBSET_FONT))
+    if "glyf" not in saved.reader.keys():
+        return "built, but without TrueType outlines (stb_truetype cannot read it)"
+    size = SUBSET_FONT.stat().st_size
+    return (f"{SUBSET_FONT.relative_to(ROOT)}: {len(unicodes)} characters, "
+            f"{size / (1 << 20):.2f} MB" + ("" if size <= 4 << 20 else " TOO BIG"))
+
 
 def cmap_characters(data):
     """The characters a TrueType or OpenType font file maps (its Unicode cmap, format 4 or 12)."""
@@ -401,6 +518,21 @@ def check():
             print("    warning:", line)
         failed |= bool(problems)
     print(f"{len(texts)} texts in the code, {len(catalogs)} catalogs" + (" FAIL" if failed else " PASS"))
+    # The shipped subset must draw every character of the CJK catalogs: a translation added
+    # to a .po without rebuilding the subset would discard its catalog on the console
+    # ("not used: no font for it"). A missing character fails the check.
+    subset = subset_characters()
+    required = subset_charset()
+    if subset is None:
+        print(f"{SUBSET_FONT.name}: missing, run tools/launcher/assets.sh to build it FAIL")
+        failed = True
+    else:
+        missing = sorted(required - subset)
+        print(f"{SUBSET_FONT.name}: {len(subset)} characters, {len(required)} required"
+              + (" FAIL" if missing else " PASS"))
+        for code in missing[:40]:
+            print("    subset lacks", hex(code), chr(code))
+        failed |= bool(missing)
     return 1 if failed else 0
 
 
@@ -419,6 +551,8 @@ def main():
         print(f"{path.relative_to(ROOT)}: {len(existing)} translations kept")
     elif command == "check":
         sys.exit(check())
+    elif command == "subset":
+        print(build_subset())
     else:
         sys.exit(__doc__)
 

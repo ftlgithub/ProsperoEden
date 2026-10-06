@@ -256,6 +256,10 @@ void SystemFonts::set(std::vector<std::string> files, std::string_view language)
             for (const char *file : group->files)
                 if (file != nullptr && name == file)
                     face->script = group->script;
+        // The CJK subset shipped with the app shares the Chinese font's shapes; which of the
+        // faces draws a shared character still follows the tag-prefixed order above.
+        if (name == "noto-sans-cjk-subset.ttf")
+            face->script = Script::chinese;
         face->path = std::move(path);
         faces_.push_back(std::move(face));
     }

@@ -97,14 +97,21 @@ void LoadLanguage(pe::gfx::Font& font) {
     }
     std::string folder = "none";
     std::size_t files = 0;
+    std::vector<std::string> chosen;
+    // The CJK subset shipped with the app (ui/fonts/): Chinese reads it even where the
+    // console's own fonts are unmounted. It comes first; the mounted fonts still add the
+    // scripts it lacks (Greek, Thai, Arabic). Missing file: the old behavior below.
+    const std::string bundled = Eden::AppFile("ui/fonts/noto-sans-cjk-subset.ttf");
+    if (Eden::FileExists(bundled)) chosen.push_back(bundled);
     for (const std::string& candidate : pe::gfx::system_font_folders()) {
         std::vector<std::string> found = pe::gfx::system_font_files(candidate, tag);
         if (found.empty()) continue;
         folder = candidate;
         files = found.size();
-        font.use_system_fonts(std::move(found), tag);
+        chosen.insert(chosen.end(), found.begin(), found.end());
         break;
     }
+    if (!chosen.empty()) font.use_system_fonts(std::move(chosen), tag);
     if (!first) return;
     std::string catalog = "none";
     std::size_t texts = 0;

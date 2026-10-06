@@ -63,6 +63,11 @@ builds on the following projects, each under its own license.
   (`headless/prosperoeden/pe`) started there.
 - **Montserrat** by Julieta Ulanovsky and contributors, SIL Open Font License
   1.1 (`third_party/fonts`). The launcher's font is baked from Montserrat Medium.
+- **Noto Sans CJK** by Adobe and Google, SIL Open Font License 1.1
+  (`third_party/fonts/NotoSansCJKsc-OFL.txt`). A subset of its Simplified Chinese
+  Regular (`headless/prosperoeden/ui/fonts/noto-sans-cjk-subset.ttf`, cut from the
+  Chinese, Traditional Chinese, Japanese and Korean catalogs plus GB2312) ships with
+  the app, so the launcher's Chinese no longer needs the console's own fonts.
 - **[HarfBuzz](https://github.com/harfbuzz/harfbuzz)**, "Old MIT" license (its
   `COPYING` file). Shapes the launcher's text in the scripts that need it, such
   as Thai and Arabic. Fetched at the release pinned in `tools/deps.json`.
